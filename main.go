@@ -7,7 +7,9 @@ import (
 	"io"
 	"log"
 	"os"
+	"sort"
 	"strconv"
+	"strings"
 
 	"github.com/kkdai/youtube/v2"
 )
@@ -27,10 +29,29 @@ func main() {
 	video := getVideoInfo(client, link)
 	formats := video.Formats
 
-	displayFormats(formats)
-	choice := getUserChoice(formats)
+	// Filter formats to only include those with quality information
+	var filteredFormats youtube.FormatList
+	for _, format := range formats {
+		if format.QualityLabel != "" {
+			filteredFormats = append(filteredFormats, format)
+		}
+	}
 
-	selectedFormat := formats[choice]
+	// Sort formats by quality, prioritizing those with audio
+	sort.Slice(filteredFormats, func(i, j int) bool {
+		resI := parseQualityLabel(filteredFormats[i].QualityLabel)
+		resJ := parseQualityLabel(filteredFormats[j].QualityLabel)
+
+		if filteredFormats[i].AudioChannels != filteredFormats[j].AudioChannels {
+			return filteredFormats[i].AudioChannels > filteredFormats[j].AudioChannels
+		}
+		return resI > resJ
+	})
+
+	displayFormats(filteredFormats)
+	choice := getUserChoice(filteredFormats)
+
+	selectedFormat := filteredFormats[choice]
 	stream := getStream(client, video, selectedFormat)
 
 	downloadVideo(stream, video.Title, selectedFormat)
@@ -62,8 +83,10 @@ func displayFormats(formats youtube.FormatList) {
 		audio := "No"
 		if format.AudioChannels > 0 {
 			audio = "Yes"
+			fmt.Printf(Green+"[%d] Quality: %s, Audio: %s"+Reset+"\n", i, format.QualityLabel, audio)
+		} else {
+			fmt.Printf("[%d] Quality: %s, Audio: %s\n", i, format.QualityLabel, audio)
 		}
-		fmt.Printf("[%d] Quality: %s, Audio: %s\n", i, format.QualityLabel, audio)
 	}
 }
 
@@ -129,4 +152,14 @@ func downloadVideo(stream io.ReadCloser, title string, format youtube.Format) {
 	}
 
 	fmt.Println(Green + "\nDownload completed!" + Reset)
+}
+
+// parseQualityLabel extracts the numeric resolution from QualityLabel.
+func parseQualityLabel(label string) int {
+	resStr := strings.TrimSuffix(label, "p")
+	resInt, err := strconv.Atoi(resStr)
+	if err != nil {
+		return 0
+	}
+	return resInt
 }
