@@ -21,21 +21,43 @@ const (
 )
 
 func main() {
+	link := parseFlags()
+	client := youtube.Client{}
+
+	video := getVideoInfo(client, link)
+	formats := video.Formats
+
+	displayFormats(formats)
+	choice := getUserChoice(formats)
+
+	selectedFormat := formats[choice]
+	stream := getStream(client, video, selectedFormat)
+
+	downloadVideo(stream, video.Title, selectedFormat)
+}
+
+// parseFlags parses the command line flags and returns the YouTube video URL.
+func parseFlags() string {
 	link := flag.String("l", "", "YouTube video URL")
 	flag.Parse()
 
 	if *link == "" {
 		log.Fatalf(Red + "You must provide a YouTube video URL using the -l flag" + Reset)
 	}
+	return *link
+}
 
-	client := youtube.Client{}
-
-	video, err := client.GetVideo(*link)
+// getVideoInfo retrieves the video information from YouTube.
+func getVideoInfo(client youtube.Client, link string) *youtube.Video {
+	video, err := client.GetVideo(link)
 	if err != nil {
 		log.Fatalf(Red + "Failed to get video info: %v" + Reset, err)
 	}
+	return video
+}
 
-	formats := video.Formats
+// displayFormats displays the available formats for the video.
+func displayFormats(formats youtube.FormatList) {
 	for i, format := range formats {
 		audio := "No"
 		if format.AudioChannels > 0 {
@@ -43,7 +65,10 @@ func main() {
 		}
 		fmt.Printf("[%d] Quality: %s, Audio: %s\n", i, format.QualityLabel, audio)
 	}
+}
 
+// getUserChoice prompts the user to select a format and returns the chosen index.
+func getUserChoice(formats youtube.FormatList) int {
 	fmt.Print("Enter the number of the format you want to download: ")
 	reader := bufio.NewReader(os.Stdin)
 	input, err := reader.ReadString('\n')
@@ -55,24 +80,30 @@ func main() {
 	if err != nil || choice < 0 || choice >= len(formats) {
 		log.Fatalf(Red + "Invalid choice" + Reset)
 	}
+	return choice
+}
 
-	selectedFormat := formats[choice]
-
-	stream, _, err := client.GetStream(video, &selectedFormat)
+// getStream retrieves the video stream for the selected format.
+func getStream(client youtube.Client, video *youtube.Video, format youtube.Format) io.ReadCloser {
+	stream, _, err := client.GetStream(video, &format)
 	if err != nil {
 		log.Fatalf(Red + "Failed to get stream: %v" + Reset, err)
 	}
+	return stream
+}
 
-	file, err := os.Create(video.Title + ".mp4")
+// downloadVideo downloads the video stream to a file.
+func downloadVideo(stream io.ReadCloser, title string, format youtube.Format) {
+	file, err := os.Create(title + ".mp4")
 	if err != nil {
 		log.Fatalf(Red + "Failed to create file: %v" + Reset, err)
 	}
 	defer file.Close()
 
-	fmt.Printf(Green+"Downloading: %v\n"+Reset, video.Title)
+	fmt.Printf(Green+"Downloading: %v\n"+Reset, title)
 	buf := make([]byte, 32*1024)
 	var downloaded int64
-	if selectedFormat.ContentLength == 0 {
+	if format.ContentLength == 0 {
 		fmt.Println(Yellow + "Unknown video size, progress will be shown in megabytes." + Reset)
 	}
 	for {
@@ -83,8 +114,8 @@ func main() {
 				log.Fatalf(Red + "Failed to write to file: %v" + Reset, err)
 			}
 			downloaded += int64(n)
-			if selectedFormat.ContentLength > 0 {
-				fmt.Printf("\rDownloading... "+Blue+"%.2f%% complete"+Reset, float64(downloaded)/float64(selectedFormat.ContentLength)*100)
+			if format.ContentLength > 0 {
+				fmt.Printf("\rDownloading... "+Blue+"%.2f%% complete"+Reset, float64(downloaded)/float64(format.ContentLength)*100)
 			} else {
 				fmt.Printf("\rDownloading... "+Blue+"%.2f MB complete"+Reset, float64(downloaded)/(1024*1024))
 			}
